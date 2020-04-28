@@ -1,0 +1,247 @@
+""" Import required libraries"""
+
+%matplotlib inline
+import numpy as np
+
+from sklearn import datasets as ds
+from sklearn.decomposition import PCA
+from sklearn import preprocessing
+import matplotlib.pyplot as plt
+
+""" Import Data"""
+data_all = ds.load_breast_cancer()
+
+x = data_all.data
+y = data_all.target
+y_names = data_all.target_names 
+feature_names = data_all.feature_names
+
+
+"""Split and prepare the data"""
+split = int(x.shape[0] * 0.6)
+
+x_train = x[:split,:]
+y_train = y[:split]
+
+x_test = x[split:,:]
+y_test = y[split:]
+
+print('Training set size:', x_train.shape[0])
+print('Test set size:', x_test.shape[0])
+x_train
+
+
+""" Visualise the data"""
+pca = PCA(n_components=2)
+x_scaled = preprocessing.scale(x[:,:-1]) 
+x_reduced = pca.fit_transform(x_scaled)
+#x_reduced = pca.fit_transform(x[:,0:-1])
+
+for m in range(569):
+    if y[m] == 0:
+        positive = plt.scatter(x_reduced[m][0], x_reduced[m][1], c='r', marker='x')
+    else:
+        negative = plt.scatter(x_reduced[m][0], x_reduced[m][1], c='b', marker='x') 
+        
+
+plt.legend((positive, negative), ('Positive', 'Negative'), loc = 'upper right')
+plt.show()
+   
+
+"""Function for entropy calculation"""
+def calculate_entropy(y):
+    y_cont, y_stats = np.unique(y, return_counts = True)
+    p = y_stats/np.sum(y_stats)
+    ent = 0
+    for i in range(len(p)):
+        ent += p[i]*np.log2(p[i])
+    ent = -ent
+    
+    return ent
+
+"""Find the split"""
+def find_split(x, y):
+    """Given a dataset and its target values, this finds the optimal combination
+    of feature and split point that gives the maximum information gain."""
+    
+    # Need the starting entropy so we can measure improvement...
+    start_entropy = calculate_entropy(y)
+    
+    # Best thus far, initialised to a dud that will be replaced immediately...
+    best = {'infogain' : -np.inf}
+    
+    # Loop every possible split of every dimension...
+    for i in range(x.shape[1]):
+        
+        for split in np.unique(x[:,i]):
+
+            left = calculate_entropy(y[x[:,i] <= split]) 
+            left_pi = len(y[x[:,i] <= split])/len(y)
+            left_indices = x[:,i] <= split
+
+            right = calculate_entropy(y[x[:,i]>split])
+            right_pi = len(y[x[:,i] > split])/len(y)
+            right_indices = x[:,i] > split
+
+            total = (left_pi * left) + (right_pi * right)
+            
+            infogain = calculate_entropy(y) - total
+    
+            if infogain > best['infogain']:
+                best = {'feature' : i,
+                        
+                        'split' : split,
+                        'infogain' : infogain, 
+                        'left_indices' : left_indices,
+                        'right_indices' : right_indices}
+    return best
+    
+
+"""Define the build tree function"""
+def build_tree(x, y, max_depth = np.inf):
+    # Check if either of the stopping conditions have been reached. If so generate a leaf node...
+    if max_depth==1 or (y==y[0]).all():
+        # Generate a leaf node...
+        classes, counts = np.unique(y, return_counts=True)
+        return {'leaf' : True, 'class' : classes[np.argmax(counts)]}
+    
+    else:
+        move = find_split(x, y)
+        
+        left = build_tree(x[move['left_indices'],:], y[move['left_indices']], max_depth - 1)
+        right = build_tree(x[move['right_indices'],:], y[move['right_indices']], max_depth - 1)
+        
+        return {'leaf' : False,
+                'feature' : move['feature'],
+                'split' : move['split'],
+                'infogain' : move['infogain'],
+                'left' : left,
+                'right' : right}
+ """Define a prediction function to test prediction on a single data entry"""
+ def predict_one(tree, sample):
+ 
+    """Does the prediction for a single data point"""
+    if tree['leaf']:
+        return tree['class']
+    
+    else:
+        if sample[tree['feature']] <= tree['split']:
+            return predict_one(tree['left'], sample)
+        else:
+            return predict_one(tree['right'], sample)
+        
+"""Define a function that can make predictions for an entire data martix"""
+def predict(tree, samples):
+
+    """Predicts class for every entry of a data matrix."""
+    ret = np.empty(samples.shape[0], dtype=int)
+    ret.fill(-1)
+    indices = np.arange(samples.shape[0])
+    
+    def tranverse(node, indices):
+        nonlocal samples
+        nonlocal ret
+        
+        if node['leaf']:
+            ret[indices] = node['class']
+        
+        else:
+            going_left = samples[indices, node['feature']] <= node['split']
+            left_indices = indices[going_left]
+            right_indices = indices[np.logical_not(going_left)]
+            
+            if left_indices.shape[0] > 0:
+                tranverse(node['left'], left_indices)
+                
+            if right_indices.shape[0] > 0:
+                tranverse(node['right'], right_indices)
+    
+    tranverse(tree, indices)
+    return ret
+    
+
+"""Build a tree and test its accuracy"""
+print('Training Accuracy')
+
+test_predict_train = predict(build_tree(x_train, y_train, np.inf), x_train)
+actual_results_train = y_train 
+
+accuracy_train = []
+for i in range(len(y_train)):    
+    if test_predict_train[i] == actual_results_train[i]:
+        accuracy_train.append(i)
+    
+percentage_accuracy_train = len(accuracy_train)/len(y_train) * 100
+print(percentage_accuracy_train)
+
+print()
+
+print('Test Accuracy')
+test_predict_test = predict(build_tree(x_train, y_train, np.inf), x_test)
+actual_results_test = y_test 
+
+accuracy_test = []
+for i in range(len(y_test)):    
+    if test_predict_test[i] == actual_results_test[i]:
+        accuracy_test.append(i)
+    
+percentage_accuracy_test = len(accuracy_test)/len(y_test) * 100
+                               
+print(percentage_accuracy_test)
+
+
+"""Find the depth that gives the best accuracy"""
+# **************************************************************** 2 marks
+maxdepth_test = {}    
+for i in range(2,7):
+    test_predict = predict(build_tree(x_train, y_train, i), x_test)
+    actual_results_test = y_test 
+    accuracy_test = []
+
+    for m in range(len(y_test)):    
+            if test_predict[m] == actual_results_test[m]:
+                accuracy_test.append(m)
+            best_maxdepth_test = 0
+            percentage_accuracy_test = len(accuracy_test)/len(y_test) * 100 
+            maxdepth_test[i] = percentage_accuracy_test 
+
+max_value_test = max(maxdepth_test.values())
+max_key_test = [k for k, v in maxdepth_test.items() if v == max_value_test]
+print('Best max test depth is', max_key_test[0], 'with', str(max_value_test) + '%' , 'accuracy') 
+
+print()
+
+maxdepth_train = {}    
+for i in range(2,7):
+    train_predict = predict(build_tree(x_train, y_train, i), x_train)
+    actual_results_train = y_train 
+    accuracy_train = []
+
+    for m in range(len(y_train)):    
+            if train_predict[m] == actual_results_train[m]:
+                accuracy_train.append(m)
+            best_maxdepth_train = 0
+            percentage_accuracy_train = len(accuracy_train)/len(y_train) * 100
+            maxdepth_train[i] = percentage_accuracy_train 
+
+max_value_train = max(maxdepth_train.values())
+max_key_train = [k for k, v in maxdepth_train.items() if v == max_value_train]
+
+print('Best max train depth is', max_key_train[0], 'with', str(max_value_train) + '%' , 'accuracy') 
+
+
+"""Visualise the process"""
+def print_tree(tree, indent = 0):
+  
+    if tree['leaf'] == False:
+        print(' '*indent, "[x" + str(tree['feature']) + "<=" + str(tree['split']) + ']')
+        print_tree(tree['left'], indent + 1) 
+        
+        print()
+        
+        print(' '*indent, "[x" + str(tree['feature']) + '>' + str(tree['split']) + ']')
+        print_tree(tree['right'], indent + 1)
+    
+    elif tree['leaf'] == True:
+        print(' '*indent, 'predict', tree['class'])
+   
